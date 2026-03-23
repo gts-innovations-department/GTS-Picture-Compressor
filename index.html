@@ -1,0 +1,159 @@
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Image Compressor</title>
+
+<script src="https://cdn.jsdelivr.net/npm/browser-image-compression@2.0.2/dist/browser-image-compression.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+
+<style>
+body {
+    background:#121212;
+    color:white;
+    font-family:Segoe UI;
+    display:flex;
+    justify-content:center;
+    padding:40px;
+}
+
+.card {
+    width:700px;
+    background:#1e1e1e;
+    padding:20px;
+    border-radius:12px;
+    border:2px solid #2a2a2a;
+}
+
+input {
+    width:100%;
+    padding:10px;
+    margin-bottom:15px;
+    border-radius:6px;
+    border:1px solid #444;
+    background:#2a2a2a;
+    color:white;
+}
+
+button {
+    padding:10px 16px;
+    margin-right:10px;
+    border:none;
+    border-radius:8px;
+    background:#4caf50;
+    color:white;
+    font-weight:bold;
+    cursor:pointer;
+}
+
+.progress {
+    width:100%;
+    height:20px;
+    background:#333;
+    border-radius:10px;
+    margin-top:10px;
+}
+
+.bar {
+    height:100%;
+    width:0%;
+    background:#1e90ff;
+    border-radius:10px;
+    transition:width 0.2s;
+}
+
+pre {
+    margin-top:15px;
+    background:#111;
+    padding:15px;
+    border-radius:8px;
+    color:#1e90ff;
+    max-height:250px;
+    overflow:auto;
+}
+</style>
+</head>
+
+<body>
+
+<div class="card">
+    <input type="file" id="folderInput" webkitdirectory multiple>
+
+    <div>
+        <button onclick="start(512)">Compress to 512 KB</button>
+        <button onclick="start(300)">Compress to 300 KB</button>
+        <button onclick="start(70)">Compress to 70 KB</button>
+    </div>
+
+    <div class="progress"><div class="bar" id="bar"></div></div>
+
+    <pre id="log"></pre>
+</div>
+
+<script>
+const log = document.getElementById("log");
+const bar = document.getElementById("bar");
+
+function write(text) {
+    log.textContent += text + "\\n";
+    log.scrollTop = log.scrollHeight;
+}
+
+async function compressFile(file, maxKB) {
+    const options = {
+        maxSizeMB: maxKB / 1024,
+        useWebWorker: true,
+    };
+
+    return await imageCompression(file, options);
+}
+
+async function start(maxKB) {
+    const input = document.getElementById("folderInput");
+    const files = Array.from(input.files);
+
+    if (!files.length) return alert("Select a folder first");
+
+    const images = files.filter(f =>
+        ["image/jpeg","image/png","image/webp"].includes(f.type)
+    );
+
+    log.textContent = "";
+    write(`Starting compression to ${maxKB} KB`);
+    write(`Total images: ${images.length}\\n`);
+
+    const zip = new JSZip();
+    let done = 0;
+
+    for (const file of images) {
+        try {
+            const compressed = await compressFile(file, maxKB);
+            zip.file(file.name, compressed);
+
+            done++;
+            bar.style.width = Math.round((done / images.length) * 100) + "%";
+
+            write("DONE: " + file.name);
+        } catch (e) {
+            write("ERROR: " + file.name);
+        }
+    }
+
+    write("\\nCreating ZIP...");
+
+    const blob = await zip.generateAsync({ type: "blob" });
+
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "compressed_images.zip";
+    a.click();
+
+    bar.style.background = "#4caf50";
+    write("\\n✅ Finished");
+}
+</script>
+
+</body>
+</html>
+```
