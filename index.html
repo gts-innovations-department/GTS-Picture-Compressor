@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Image Compressor w/ HEIC Support</title>
+<title>Image Compressor (HEIC + JPEG/PNG/WebP)</title>
 
 <!-- Image Compression -->
 <script src="https://cdn.jsdelivr.net/npm/browser-image-compression@2.0.2/dist/browser-image-compression.js"></script>
@@ -22,7 +22,6 @@ button{padding:10px 16px;margin-right:10px;border:none;border-radius:8px;backgro
 pre{margin-top:15px;background:#111;padding:15px;border-radius:8px;color:#1e90ff;max-height:250px;overflow:auto;}
 </style>
 </head>
-
 <body>
 <div class="card">
     <input type="file" id="folderInput" webkitdirectory multiple>
@@ -31,7 +30,6 @@ pre{margin-top:15px;background:#111;padding:15px;border-radius:8px;color:#1e90ff
         <button onclick="start(300)">Compress to 300 KB</button>
         <button onclick="start(70)">Compress to 70 KB</button>
     </div>
-
     <div class="progress"><div class="bar" id="bar"></div></div>
     <pre id="log"></pre>
 </div>
@@ -39,76 +37,59 @@ pre{margin-top:15px;background:#111;padding:15px;border-radius:8px;color:#1e90ff
 <script>
 const log = document.getElementById("log");
 const bar = document.getElementById("bar");
+function write(text){ log.textContent += text+"\n"; log.scrollTop = log.scrollHeight; }
 
-function write(text){
-    log.textContent += text+"\n";
-    log.scrollTop = log.scrollHeight;
-}
+// Detect HEIC by extension
+function isHeic(file){ return file.name.toLowerCase().match(/\.(heic|heif)$/i); }
 
-// Detect HEIC by extension or MIME
-function isHeic(file){
-    return file.name.toLowerCase().match(/\.(heic|heif)$/i);
-}
-
-// Decode HEIC → JPEG via libheif-js + canvas
+// Decode HEIC → JPEG via libheif-js
 async function decodeHeicToJpegBlob(file){
     write("HEIC decode: "+file.name);
-
-    // load heif decoder
     const decoder = new libheif.HeifDecoder();
     const arrayBuffer = await file.arrayBuffer();
     const heifImages = decoder.decode(new Uint8Array(arrayBuffer));
-
-    const image = heifImages[0]; // primary frame
+    const image = heifImages[0];
     const width = image.get_width();
     const height = image.get_height();
-
     const canvas = document.createElement("canvas");
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext("2d");
-
-    // draw pixel data via ImageData
     const imageData = ctx.createImageData(width, height);
-    await new Promise((resolve, reject) => {
-        image.display(imageData, (data) => {
-            if(!data) return reject(new Error("HEIF display error"));
-            resolve();
-        });
+    await new Promise((resolve,reject)=>{
+        image.display(imageData, (data)=>{if(!data) reject("HEIF display error"); else resolve();});
     });
-    ctx.putImageData(imageData, 0, 0);
-
-    // export to JPEG blob
-    return await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 1.0));
+    ctx.putImageData(imageData,0,0);
+    return await new Promise(resolve => canvas.toBlob(resolve,"image/jpeg",1.0));
 }
 
-// Convert file (HEIC if needed) + compress with size target
-async function convertAndCompress(file, targetKB){
-    let workingBlob = file;
-
-    // convert HEIC → JPEG first
-    if(isHeic(file)){
-        const blob = await decodeHeicToJpegBlob(file);
-        workingBlob = new File([blob], file.name.replace(/\.(heic|heif)$/i,".jpg"),{type:"image/jpeg"});
-    }
-
-    // ensure not too big resolution
-    const compressed = await imageCompression(workingBlob, {
+// Compress JPEG/PNG/WebP
+async function compressNormalImage(file,targetKB){
+    return await imageCompression(file,{
         maxSizeMB: Math.max(targetKB,300)/1024,
-        maxWidthOrHeight: 1600,
-        initialQuality: 0.7,
+        maxWidthOrHeight:1600,
+        initialQuality:0.7,
         useWebWorker:true
     });
-    return compressed;
+}
+
+// Convert + compress any image
+async function convertAndCompress(file,targetKB){
+    if(isHeic(file)){
+        const blob = await decodeHeicToJpegBlob(file);
+        const heicFile = new File([blob], file.name.replace(/\.(heic|heif)$/i,".jpg"), {type:"image/jpeg"});
+        return await compressNormalImage(heicFile,targetKB);
+    } else {
+        return await compressNormalImage(file,targetKB);
+    }
 }
 
 async function start(targetKB){
     const input = document.getElementById("folderInput");
     const files = Array.from(input.files);
-
     if(!files.length) return alert("Select a folder first");
 
-    const images = files.filter(f=>
+    const images = files.filter(f =>
         f.type.startsWith("image/") ||
         f.name.match(/\.(jpg|jpeg|png|webp|heic|heif)$/i)
     );
@@ -116,7 +97,6 @@ async function start(targetKB){
     log.textContent="";
     bar.style.width="0%";
     bar.style.background="#1e90ff";
-
     write(`Compressing images → target ${targetKB} KB`);
     write(`Found ${images.length} image(s)\n`);
 
@@ -126,8 +106,7 @@ async function start(targetKB){
     for(const file of images){
         try{
             const result = await convertAndCompress(file,targetKB);
-            zip.file(result.name||file.name, result);
-
+            zip.file(result.name||file.name,result);
             done++;
             bar.style.width = Math.round((done/images.length)*100)+"%";
             write("✔ "+(result.name||file.name));
@@ -139,19 +118,17 @@ async function start(targetKB){
 
     write("\nCreating ZIP...");
     const blob = await zip.generateAsync({type:"blob"});
-    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url;
+    a.href = URL.createObjectURL(blob);
     a.download="compressed_images.zip";
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    setTimeout(()=>URL.revokeObjectURL(a.href),1000);
 
     bar.style.background="#4caf50";
     write("\nDone!");
 }
 </script>
-
 </body>
 </html>
