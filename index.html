@@ -1,11 +1,16 @@
-```html
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <title>Image Compressor</title>
 
+<!-- Compression -->
 <script src="https://cdn.jsdelivr.net/npm/browser-image-compression@2.0.2/dist/browser-image-compression.js"></script>
+
+<!-- HEIC Conversion -->
+<script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
+
+<!-- ZIP -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 
 <style>
@@ -24,16 +29,6 @@ body {
     padding:20px;
     border-radius:12px;
     border:2px solid #2a2a2a;
-}
-
-input {
-    width:100%;
-    padding:10px;
-    margin-bottom:15px;
-    border-radius:6px;
-    border:1px solid #444;
-    background:#2a2a2a;
-    color:white;
 }
 
 button {
@@ -80,7 +75,7 @@ pre {
 <div class="card">
     <input type="file" id="folderInput" webkitdirectory multiple>
 
-    <div>
+    <div style="margin-top:10px;">
         <button onclick="start(512)">Compress to 512 KB</button>
         <button onclick="start(300)">Compress to 300 KB</button>
         <button onclick="start(70)">Compress to 70 KB</button>
@@ -96,64 +91,110 @@ const log = document.getElementById("log");
 const bar = document.getElementById("bar");
 
 function write(text) {
-    log.textContent += text + "\\n";
+    log.textContent += text + "\n";
     log.scrollTop = log.scrollHeight;
 }
 
-async function compressFile(file, maxKB) {
-    const options = {
-        maxSizeMB: maxKB / 1024,
-        useWebWorker: true,
-    };
-
-    return await imageCompression(file, options);
+// Detect HEIC
+function isHeic(file) {
+    return (
+        file.type === "image/heic" ||
+        file.type === "image/heif" ||
+        file.name.toLowerCase().endsWith(".heic") ||
+        file.name.toLowerCase().endsWith(".heif")
+    );
 }
 
-async function start(maxKB) {
+// Convert HEIC → JPEG and compress dynamically
+async function convertAndCompress(file, targetKB) {
+    let blob = file;
+
+    if (isHeic(file)) {
+        write("CONVERTING HEIC: " + file.name);
+
+        const convertedBlob = await heic2any({
+            blob: file,
+            toType: "image/jpeg",
+            quality: 1.0
+        });
+
+        blob = new File(
+            [convertedBlob],
+            file.name.replace(/\.(heic|heif)$/i, ".jpg"),
+            { type: "image/jpeg" }
+        );
+    }
+
+    // Set defaults for automatic downscale if image is too big
+    let maxWidthOrHeight = 1600; // downscale huge images
+    let initialQuality = 0.7;    // start lower to hit small KBs
+
+    // Adjust default target for huge images (~300 KB if targetKB too low)
+    if (targetKB < 300) targetKB = 300;
+
+    const compressed = await imageCompression(blob, {
+        maxSizeMB: targetKB / 1024,
+        maxWidthOrHeight,
+        initialQuality,
+        useWebWorker: true
+    });
+
+    return compressed;
+}
+
+// Main
+async function start(targetKB) {
     const input = document.getElementById("folderInput");
     const files = Array.from(input.files);
 
     if (!files.length) return alert("Select a folder first");
 
     const images = files.filter(f =>
-        ["image/jpeg","image/png","image/webp"].includes(f.type)
+        f.type.startsWith("image/") ||
+        f.name.match(/\.(jpg|jpeg|png|webp|heic|heif)$/i)
     );
 
     log.textContent = "";
-    write(`Starting compression to ${maxKB} KB`);
-    write(`Total images: ${images.length}\\n`);
+    bar.style.width = "0%";
+    bar.style.background = "#1e90ff";
+
+    write(`Starting compression to ${targetKB} KB`);
+    write(`Total images: ${images.length}\n`);
 
     const zip = new JSZip();
     let done = 0;
 
     for (const file of images) {
         try {
-            const compressed = await compressFile(file, maxKB);
-            zip.file(file.name, compressed);
+            const finalFile = await convertAndCompress(file, targetKB);
+            zip.file(finalFile.name, finalFile);
 
             done++;
             bar.style.width = Math.round((done / images.length) * 100) + "%";
+            write("DONE: " + finalFile.name);
 
-            write("DONE: " + file.name);
         } catch (e) {
             write("ERROR: " + file.name);
+            console.error(e);
         }
     }
 
-    write("\\nCreating ZIP...");
+    write("\nCreating ZIP...");
 
     const blob = await zip.generateAsync({ type: "blob" });
-
+    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
+    a.href = url;
     a.download = "compressed_images.zip";
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
 
     bar.style.background = "#4caf50";
-    write("\\n✅ Finished");
+    write("\n✅ Finished");
 }
 </script>
 
 </body>
 </html>
-```
